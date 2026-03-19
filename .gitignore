@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+attendance.db
+embeddings.pkl
+student_faces/
+.env
+*.pkl
