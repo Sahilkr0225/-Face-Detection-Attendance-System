@@ -5,7 +5,7 @@ import os
 # ─────────────────────────────────────────
 SIMILARITY_THRESHOLD = 0.50   # is se kam → Unknown
 CONFIRMED_THRESHOLD  = 0.75   # is se zyada → Confirmed Present
-ENROLLMENT_PHOTOS    = 5      # enrollment mein kitni photos leni hain
+ENROLLMENT_PHOTOS    = 3   # enrollment mein kitni photos leni hain
 
 # ─────────────────────────────────────────
 # Attendance Logic Settings
