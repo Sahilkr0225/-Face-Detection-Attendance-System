@@ -4,7 +4,7 @@ import os
 # Face Recognition Settings
 # ─────────────────────────────────────────
 SIMILARITY_THRESHOLD = 0.50   # is se kam → Unknown
-CONFIRMED_THRESHOLD  = 0.75   # is se zyada → Confirmed Present
+CONFIRMED_THRESHOLD  = 0.65   # is se zyada → Confirmed Present
 ENROLLMENT_PHOTOS    = 3   # enrollment mein kitni photos leni hain
 
 # ─────────────────────────────────────────

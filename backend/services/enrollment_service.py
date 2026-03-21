@@ -233,6 +233,9 @@ def delete_student(db: Session, student_id: str) -> bool:
         known_encodings.pop(idx)
         save_embeddings(known_ids, known_encodings)
 
+        from backend.services.recognition_service import reload_embeddings
+        reload_embeddings()
+
     db.delete(student)
     db.commit()
 

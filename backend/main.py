@@ -2,8 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.database.db import init_db
-
-
+from backend.services.recognition_service import load_embeddings_to_memory
 
 
 # ─────────────────────────────────────────
@@ -12,6 +11,7 @@ from backend.database.db import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    load_embeddings_to_memory()  # ← Embeddings memory mein load karo
     print("[APP] Server started successfully!")
     yield
 
@@ -27,9 +27,8 @@ app = FastAPI(
 )
 
 
-
 # ─────────────────────────────────────────
-# CORS — Frontend se requests allow karo
+# CORS
 # ─────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -39,11 +38,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from backend.routes.auth_routes import router as auth_router
-app.include_router(auth_router)
 
+# ─────────────────────────────────────────
+# Routes Register
+# ─────────────────────────────────────────
+from backend.routes.auth_routes import router as auth_router
 from backend.routes.enrollment_routes import router as enrollment_router
+from backend.routes.recognition_routes import router as recognition_router
+
+app.include_router(auth_router)
 app.include_router(enrollment_router)
+app.include_router(recognition_router)
+
 
 # ─────────────────────────────────────────
 # Test Route
