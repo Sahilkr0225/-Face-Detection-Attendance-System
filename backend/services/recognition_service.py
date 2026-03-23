@@ -1,3 +1,4 @@
+import cv2
 import pickle
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -16,10 +17,7 @@ known_encodings = []
 
 
 def load_embeddings_to_memory():
-    """
-    Server start hote hi embeddings
-    memory mein load karo — fast access ke liye
-    """
+    """Server start hote hi embeddings memory mein load karo"""
     global known_ids, known_encodings
 
     try:
@@ -31,15 +29,51 @@ def load_embeddings_to_memory():
     except FileNotFoundError:
         known_ids = []
         known_encodings = []
-        print("[RECOGNITION] No embeddings found — start enrolling students!")
+        print("[RECOGNITION] No embeddings found!")
 
 
 def reload_embeddings():
-    """
-    Naya student enroll hone ke baad
-    embeddings reload karo
-    """
+    """Naya student enroll hone ke baad reload karo"""
     load_embeddings_to_memory()
+
+
+# ─────────────────────────────────────────
+# Liveness Detection
+# ─────────────────────────────────────────
+
+def is_real_face(frame, bbox) -> bool:
+    """
+    Simple liveness detection:
+    1. Texture check — real skin has texture
+    2. Color distribution check
+    """
+    x1, y1, x2, y2 = [int(b) for b in bbox]
+    face_region = frame[y1:y2, x1:x2]
+
+    if face_region.size == 0:
+        return False
+
+    # Check 1: Texture Analysis
+    gray = cv2.cvtColor(face_region, cv2.COLOR_BGR2GRAY)
+    texture_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    if texture_score < 60:
+        print(f"[LIVENESS] Failed texture check! Score: {texture_score}")
+        return False
+
+    # Check 2: Color Distribution
+    b, g, r = cv2.split(face_region)
+    b_std = float(np.std(b))
+    g_std = float(np.std(g))
+    r_std = float(np.std(r))
+    avg_std = (b_std + g_std + r_std) / 3
+
+    if avg_std < 15:
+        print(f"[LIVENESS] Failed color check! Avg std: {avg_std}")
+        return False
+
+    print(f"[LIVENESS] Real face! Texture: {texture_score:.1f}, Color: {avg_std:.1f}")
+    return True
 
 
 # ─────────────────────────────────────────
@@ -47,16 +81,12 @@ def reload_embeddings():
 # ─────────────────────────────────────────
 
 def recognize_face(frame) -> tuple:
-    """
-    Ek frame mein ek face recognize karo
-    Returns: (student_id, result, confidence)
-    """
+    """Ek frame mein ek face recognize karo"""
     from insightface.app import FaceAnalysis
 
     app = FaceAnalysis(name='buffalo_l')
     app.prepare(ctx_id=0, det_size=(640, 640))
 
-    # Face detect karo
     faces = app.get(frame)
 
     if not faces:
@@ -65,19 +95,17 @@ def recognize_face(frame) -> tuple:
     if not known_encodings:
         return None, "No students enrolled yet!", 0.0
 
-    # Query embedding
+    # Liveness check
+    if not is_real_face(frame, faces[0].bbox):
+        return None, "Spoof detected! Real face required.", 0.0
+
     query_embedding = faces[0].embedding.reshape(1, -1)
-
-    # Known embeddings matrix
     known_matrix = np.array(known_encodings)
-
-    # Cosine similarity — ek saath saare students se compare
     scores = cosine_similarity(query_embedding, known_matrix)[0]
 
     best_idx = np.argmax(scores)
     best_score = float(scores[best_idx])
 
-    # Confidence system
     if best_score >= CONFIRMED_THRESHOLD:
         status = "CONFIRMED"
         student_id = known_ids[best_idx]
@@ -99,17 +127,12 @@ def recognize_face(frame) -> tuple:
 # ─────────────────────────────────────────
 
 def recognize_all_faces(frame) -> list:
-    """
-    Ek frame mein saare faces recognize karo
-    Classroom scan ke liye — 70 students ek saath!
-    Returns: list of {student_id, result, confidence, bbox}
-    """
+    """Ek frame mein saare faces recognize karo"""
     from insightface.app import FaceAnalysis
 
     app = FaceAnalysis(name='buffalo_l')
     app.prepare(ctx_id=0, det_size=(640, 640))
 
-    # Saare faces detect karo
     faces = app.get(frame)
 
     if not faces:
@@ -118,20 +141,24 @@ def recognize_all_faces(frame) -> list:
     if not known_encodings:
         return []
 
-    # Saare detected faces ke embeddings
     query_embeddings = np.array([face.embedding for face in faces])
-
-    # Known embeddings matrix
     known_matrix = np.array(known_encodings)
-
-    # Matrix cosine similarity — ek saath saare!
     similarity_matrix = cosine_similarity(query_embeddings, known_matrix)
-    # Shape: (detected_faces, known_students)
 
     results = []
     for i, scores in enumerate(similarity_matrix):
         best_idx = np.argmax(scores)
         best_score = float(scores[best_idx])
+
+        # Liveness check
+        if not is_real_face(frame, faces[i].bbox):
+            results.append({
+                "student_id": None,
+                "status": "SPOOF",
+                "confidence": 0.0,
+                "bbox": faces[i].bbox.tolist()
+            })
+            continue
 
         if best_score >= CONFIRMED_THRESHOLD:
             results.append({

@@ -3,6 +3,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.database.db import init_db
 from backend.services.recognition_service import load_embeddings_to_memory
+from backend.routes.auth_routes import router as auth_router
+from backend.routes.enrollment_routes import router as enrollment_router
+from backend.routes.recognition_routes import router as recognition_router 
+from backend.routes.teacher_route import router as teacher_router
+
 
 
 # ─────────────────────────────────────────
@@ -42,13 +47,11 @@ app.add_middleware(
 # ─────────────────────────────────────────
 # Routes Register
 # ─────────────────────────────────────────
-from backend.routes.auth_routes import router as auth_router
-from backend.routes.enrollment_routes import router as enrollment_router
-from backend.routes.recognition_routes import router as recognition_router
 
 app.include_router(auth_router)
 app.include_router(enrollment_router)
 app.include_router(recognition_router)
+app.include_router(teacher_router)
 
 
 # ─────────────────────────────────────────
