@@ -3,18 +3,20 @@ import os
 # ─────────────────────────────────────────
 # Face Recognition Settings
 # ─────────────────────────────────────────
-SIMILARITY_THRESHOLD = 0.65   # is se kam → Unknown
-CONFIRMED_THRESHOLD  = 0.45   # is se zyada → Confirmed Present
-ENROLLMENT_PHOTOS    = 3   # enrollment mein kitni photos leni hain
+SIMILARITY_THRESHOLD = 0.35  # is se kam → Unknown
+CONFIRMED_THRESHOLD  = 0.55   # is se zyada → Confirmed Present
+ENROLLMENT_PHOTOS    = 5   # enrollment mein kitni photos leni hain
 
 # ─────────────────────────────────────────
 # Attendance Logic Settings
 # ─────────────────────────────────────────
-STRIKE_LIMIT             = 2  # kitne strikes pe absent mark karo
+STRIKE_LIMIT             = 1  # kitne strikes pe absent mark karo
 ENTRY_WINDOW_MINUTES     = 1  # class shuru ke baad kitne min tak entry scan
 EXIT_WINDOW_MINUTES      = 1  # class khatam hone se pehle kitne min
 MID_SCAN_COUNT_MIN       = 1  # minimum random mid scans
 MID_SCAN_COUNT_MAX       = 2  # maximum random mid scans
+ENTRY_SCAN_INTERVAL_SECONDS = 10  # Har 10 sec pe entry scan
+EXIT_SCAN_INTERVAL_SECONDS = 10   # Har 10 sec pe exit scan
 
 # ─────────────────────────────────────────
 # Camera Settings

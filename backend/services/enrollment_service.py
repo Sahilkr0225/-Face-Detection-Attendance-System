@@ -67,10 +67,8 @@ def process_enrollment(
     images: list
 ) -> Student:
     """Core enrollment — dono options yahi use karenge"""
-    from insightface.app import FaceAnalysis
-
-    app = FaceAnalysis(name='buffalo_l')
-    app.prepare(ctx_id=0, det_size=(640, 640))
+    
+    from backend.services.recognition_service import app
 
     embeddings = []
     rejected = 0
@@ -140,7 +138,7 @@ def enroll_student_via_camera(
     db: Session,
     name: str,
     roll_no: str,
-    num_photos: int = 3
+    num_photos: int = 5
 ) -> Student:
     """
     Camera se 3 photos lo:
@@ -149,7 +147,9 @@ def enroll_student_via_camera(
     instructions = [
         "Look straight",
         "Turn your face left",
-        "Turn your face right"
+        "Turn your face right",
+        "Tilt your head up",
+        "Tilt your head down"
     ]
 
     cap = cv2.VideoCapture(0)
@@ -219,13 +219,19 @@ def get_all_students(db: Session) -> list:
 # ─────────────────────────────────────────
 # Delete Student
 # ─────────────────────────────────────────
-
 def delete_student(db: Session, student_id: str) -> bool:
     student = db.query(Student).filter(Student.id == student_id).first()
 
     if not student:
         return False
 
+    # ✅ Pehle attendance records delete karo
+    from backend.database.models import Attendance
+    db.query(Attendance).filter(
+        Attendance.student_id == student_id
+    ).delete()
+
+    # ✅ Embeddings se remove karo
     known_ids, known_encodings = load_embeddings()
     if student.id in known_ids:
         idx = known_ids.index(student.id)
@@ -236,6 +242,7 @@ def delete_student(db: Session, student_id: str) -> bool:
         from backend.services.recognition_service import reload_embeddings
         reload_embeddings()
 
+    # ✅ Ab student delete karo
     db.delete(student)
     db.commit()
 

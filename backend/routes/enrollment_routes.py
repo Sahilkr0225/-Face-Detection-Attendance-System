@@ -138,7 +138,7 @@ async def remove_student(
     db: Session = Depends(get_db),
     teacher=Depends(get_current_teacher)
 ):
-    """Student ko system se remove karo"""
+    """Delete the student from the system"""
     success = delete_student(db, student_id)
 
     if not success:

@@ -2,6 +2,7 @@ import cv2
 import pickle
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from insightface.app import FaceAnalysis
 from backend.config import (
     EMBEDDINGS_PATH,
     SIMILARITY_THRESHOLD,
@@ -10,8 +11,11 @@ from backend.config import (
 
 
 # ─────────────────────────────────────────
-# Global — Embeddings Memory Mein Load
+# Global — Model + Embeddings ek baar load
 # ─────────────────────────────────────────
+app = FaceAnalysis(name='buffalo_l')
+app.prepare(ctx_id=0, det_size=(640, 640))
+
 known_ids = []
 known_encodings = []
 
@@ -19,7 +23,6 @@ known_encodings = []
 def load_embeddings_to_memory():
     """Server start hote hi embeddings memory mein load karo"""
     global known_ids, known_encodings
-
     try:
         with open(EMBEDDINGS_PATH, "rb") as f:
             data = pickle.load(f)
@@ -43,9 +46,8 @@ def reload_embeddings():
 
 def is_real_face(frame, bbox) -> bool:
     """
-    Simple liveness detection:
-    1. Texture check — real skin has texture
-    2. Color distribution check
+    Liveness detection — Classroom optimized
+    Sirf texture check (artificial light ke liye)
     """
     x1, y1, x2, y2 = [int(b) for b in bbox]
     face_region = frame[y1:y2, x1:x2]
@@ -53,41 +55,25 @@ def is_real_face(frame, bbox) -> bool:
     if face_region.size == 0:
         return False
 
-    # Check 1: Texture Analysis
+    # Sirf texture check — artificial light friendly
     gray = cv2.cvtColor(face_region, cv2.COLOR_BGR2GRAY)
     texture_score = cv2.Laplacian(gray, cv2.CV_64F).var()
 
-    if texture_score < 60:
-        print(f"[LIVENESS] Failed texture check! Score: {texture_score}")
+    if texture_score < 25:
+        print(f"[LIVENESS] Failed! Score: {texture_score}")
         return False
 
-    # Check 2: Color Distribution
-    b, g, r = cv2.split(face_region)
-    b_std = float(np.std(b))
-    g_std = float(np.std(g))
-    r_std = float(np.std(r))
-    avg_std = (b_std + g_std + r_std) / 3
-
-    if avg_std < 15:
-        print(f"[LIVENESS] Failed color check! Avg std: {avg_std}")
-        return False
-
-    print(f"[LIVENESS] Real face! Texture: {texture_score:.1f}, Color: {avg_std:.1f}")
+    print(f"[LIVENESS] Real face! Texture: {texture_score:.1f}")
     return True
 
-
 # ─────────────────────────────────────────
-# Single Face Recognize
+# Single Face Recognize — Enrollment ke liye
 # ─────────────────────────────────────────
 
 def recognize_face(frame) -> tuple:
-    """Ek frame mein ek face recognize karo"""
-    from insightface.app import FaceAnalysis
+    """Enrollment ke liye single face recognize karo"""
 
-    app = FaceAnalysis(name='buffalo_l')
-    app.prepare(ctx_id=0, det_size=(640, 640))
-
-    faces = app.get(frame)
+    faces = app.get(frame)  # ✅ Global app use
 
     if not faces:
         return None, "No face detected", 0.0
@@ -128,17 +114,10 @@ def recognize_face(frame) -> tuple:
 
 def recognize_all_faces(frame) -> list:
     """Ek frame mein saare faces recognize karo"""
-    from insightface.app import FaceAnalysis
 
-    app = FaceAnalysis(name='buffalo_l')
-    app.prepare(ctx_id=0, det_size=(640, 640))
+    faces = app.get(frame)  # ✅ Global app use
 
-    faces = app.get(frame)
-
-    if not faces:
-        return []
-
-    if not known_encodings:
+    if not faces or not known_encodings:
         return []
 
     query_embeddings = np.array([face.embedding for face in faces])

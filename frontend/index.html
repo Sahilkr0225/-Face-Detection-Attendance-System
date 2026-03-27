@@ -20,6 +20,7 @@
         .hidden { display: none; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        #detection-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); pointer-events: none; z-index: 5; }
     </style>
 </head>
 <body class="h-screen flex">
@@ -163,6 +164,7 @@
                     <div class="camera-container aspect-video">
                         <div id="scan-line" class="scan-line"></div>
                         <video id="live-video" autoplay playsinline></video>
+                        <canvas id="detection-canvas"></canvas>
                     </div>
                     <div class="bg-white p-8 rounded-[2.5rem] border shadow-sm grid grid-cols-3 gap-6">
                         <div>
@@ -231,6 +233,7 @@
         let presentSet = new Set();
         let timeLeft = 0;
         let currentClassId = null;
+        let liveDetectionInterval = null;
 
         // ─── AUTH ───
         function toggleAuth() {
@@ -402,6 +405,76 @@
             }
         }
 
+        // ─── LIVE DETECTION ───
+        function drawBBoxes(canvas, results) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const colorMap = { CONFIRMED: '#22c55e', UNCERTAIN: '#eab308', UNKNOWN: '#ef4444', SPOOF: '#ef4444' };
+            const labelMap = { CONFIRMED: '✓', UNCERTAIN: '?', UNKNOWN: 'Unknown', SPOOF: 'Spoof!' };
+            results.forEach(r => {
+                if (!r.bbox) return;
+                const [x1, y1, x2, y2] = r.bbox;
+                const color = colorMap[r.status] || '#ef4444';
+                const name = r.student_name || labelMap[r.status] || 'Unknown';
+                const conf = r.confidence ? ` ${(r.confidence * 100).toFixed(0)}%` : '';
+                const label = `${name}${conf}`;
+                // Box
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                // Label background
+                ctx.font = 'bold 13px Plus Jakarta Sans, sans-serif';
+                const textWidth = ctx.measureText(label).width;
+                const labelY = y1 > 28 ? y1 - 6 : y2 + 20;
+                ctx.fillStyle = color;
+                ctx.fillRect(x1, labelY - 18, textWidth + 10, 22);
+                // Label text
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(label, x1 + 5, labelY);
+            });
+        }
+
+        async function startLiveDetection() {
+            const canvas = document.getElementById('detection-canvas');
+            const vid = document.getElementById('live-video');
+            const hiddenCanvas = document.getElementById('hidden-canvas');
+
+            liveDetectionInterval = setInterval(async () => {
+                if (!vid.srcObject || !vid.videoWidth) return;
+                canvas.width = vid.videoWidth;
+                canvas.height = vid.videoHeight;
+                hiddenCanvas.width = vid.videoWidth;
+                hiddenCanvas.height = vid.videoHeight;
+                hiddenCanvas.getContext('2d').drawImage(vid, 0, 0);
+
+                hiddenCanvas.toBlob(async (blob) => {
+                    const fd = new FormData();
+                    fd.append('image', blob, 'frame.jpg');
+                    try {
+                        const res = await axios.post(`${API}/recognition/scan`, fd, {
+                            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                        });
+                        drawBBoxes(canvas, res.data.results);
+                        res.data.results.forEach(s => {
+                            if (s.student_name && !presentSet.has(s.student_name)) {
+                                presentSet.add(s.student_name);
+                                updateAttendanceList(s.student_name, s.status, s.confidence);
+                            }
+                        });
+                    } catch (e) { console.error('Live detection error:', e); }
+                }, 'image/jpeg');
+            }, 2000);
+        }
+
+        function stopLiveDetection() {
+            if (liveDetectionInterval) {
+                clearInterval(liveDetectionInterval);
+                liveDetectionInterval = null;
+            }
+            const canvas = document.getElementById('detection-canvas');
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        }
+
         // ─── SESSION START ───
         async function startSession() {
             const dur = parseInt(document.getElementById('class-duration').value);
@@ -422,6 +495,7 @@
 
                 await startCam('live-video');
                 document.getElementById('scan-line').style.display = 'block';
+                startLiveDetection();
                 document.getElementById('status-badge').innerText = "LIVE SESSION";
                 document.getElementById('status-badge').className = "bg-green-100 px-6 py-2 rounded-full font-bold text-green-600 uppercase text-xs";
                 document.getElementById('timer-card').classList.remove('hidden');
@@ -446,6 +520,7 @@
 
         // ─── SESSION END ───
         async function endSession() {
+            stopLiveDetection();
             // Final scan
             await runManualScan();
 

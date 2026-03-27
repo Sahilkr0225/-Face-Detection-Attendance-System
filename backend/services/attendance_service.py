@@ -8,25 +8,27 @@ from backend.config import STRIKE_LIMIT, CONFIRMED_THRESHOLD, SIMILARITY_THRESHO
 
 
 # ─────────────────────────────────────────
-# In-Memory Strike Tracker
+# In-Memory Trackers
 # ─────────────────────────────────────────
 attendance_strikes = {}   # {student_id: strike_count}
 confirmed_present = set() # {student_id} — jo confirm present hain
+mid_scan_present = set()  # {student_id} — jo MID scan mein detect hue
 
 
 # ─────────────────────────────────────────
 # Class Start
 # ─────────────────────────────────────────
 
-def start_class_session(db: Session, subject: str, teacher_id: str, duration_minutes: int = 8) -> Class:
+def start_class_session(db: Session, subject: str, teacher_id: str, duration_minutes: int = 50) -> Class:
     """
     Naya class session start karo
     """
-    global attendance_strikes, confirmed_present
+    global attendance_strikes, confirmed_present, mid_scan_present
 
     # Trackers reset karo
     attendance_strikes = {}
     confirmed_present = set()
+    mid_scan_present = set()
 
     # Class DB mein save karo
     new_class = Class(
@@ -69,7 +71,13 @@ def process_scan_results(
 ) -> dict:
     """
     Scan results process karo aur attendance update karo
-    detected_students = [{"student_id": "...", "status": "CONFIRMED", "confidence": 0.79}]
+
+    ENTRY — detect ho → PRESENT mark | na ho → koi action nahi
+    MID   — detect ho → strike reset + mid_scan_present mein add
+            na ho → strike lagao, limit cross → ABSENT
+    EXIT  — detect ho + MID mein bhi tha → PRESENT mark
+            detect ho + MID mein nahi tha → koi action nahi
+            na ho → koi action nahi
     """
     detected_ids = {
         s["student_id"]
@@ -77,7 +85,6 @@ def process_scan_results(
         if s["student_id"] is not None
     }
 
-    # Saare students ki attendance lo
     attendances = db.query(Attendance).filter(
         Attendance.class_id == class_id
     ).all()
@@ -88,13 +95,12 @@ def process_scan_results(
     for att in attendances:
         student_id = att.student_id
 
+        # Already confirmed present — skip
         if student_id in confirmed_present:
-            continue  # Already confirmed — skip
+            continue
 
         if student_id in detected_ids:
-            # Student mila — strike reset
-            att.strike_count = 0
-            attendance_strikes[student_id] = 0
+            # ✅ Student mila
 
             # Confidence score update
             detected = next(
@@ -104,33 +110,61 @@ def process_scan_results(
             if detected:
                 att.confidence_score = detected["confidence"]
 
-            # Exit scan pe PRESENT mark karo
-            if scan_type == "EXIT":
+            if scan_type == "ENTRY":
+                # Entry — turant PRESENT mark
                 att.status = AttendanceStatus.PRESENT
+                att.strike_count = 0
                 att.final_marked_at = datetime.now(timezone.utc)
                 confirmed_present.add(student_id)
+                attendance_strikes[student_id] = 0
+
+            elif scan_type == "MID":
+                # Mid — strike reset + track karo
+                att.strike_count = 0
+                attendance_strikes[student_id] = 0
+                mid_scan_present.add(student_id)  # ✅ Track karo
+
+            elif scan_type == "EXIT":
+                # Exit — sirf tab PRESENT jab MID mein bhi tha
+                if student_id in mid_scan_present:
+                    att.status = AttendanceStatus.PRESENT
+                    att.strike_count = 0
+                    att.final_marked_at = datetime.now(timezone.utc)
+                    confirmed_present.add(student_id)
+                    attendance_strikes[student_id] = 0
+                # MID mein nahi tha — koi action nahi, teacher override karega
 
         else:
-            # Student nahi mila — strike add karo
-            current_strikes = attendance_strikes.get(student_id, 0) + 1
-            attendance_strikes[student_id] = current_strikes
-            att.strike_count = current_strikes
+            # ❌ Student nahi mila
 
-            # Strike limit cross ho gayi?
-            if current_strikes >= STRIKE_LIMIT:
-                att.status = AttendanceStatus.ABSENT
-                att.final_marked_at = datetime.now(timezone.utc)
+            if scan_type == "ENTRY":
+                # Entry — koi action nahi
+                pass
 
-                # Teacher ko alert
-                student = db.query(Student).filter(
-                    Student.id == student_id
-                ).first()
-                if student:
-                    alerts.append({
-                        "student_name": student.name,
-                        "roll_no": student.roll_no,
-                        "strikes": current_strikes
-                    })
+            elif scan_type == "MID":
+                # Mid — strike lagao
+                current_strikes = attendance_strikes.get(student_id, 0) + 1
+                attendance_strikes[student_id] = current_strikes
+                att.strike_count = current_strikes
+
+                # Strike limit cross?
+                if current_strikes >= STRIKE_LIMIT:
+                    att.status = AttendanceStatus.ABSENT
+                    att.final_marked_at = datetime.now(timezone.utc)
+
+                    student = db.query(Student).filter(
+                        Student.id == student_id
+                    ).first()
+                    if student:
+                        alerts.append({
+                            "student_name": student.name,
+                            "roll_no": student.roll_no,
+                            "strikes": current_strikes
+                        })
+
+            elif scan_type == "EXIT":
+                # Exit — koi action nahi, teacher override karega
+                pass
 
         updated += 1
 
@@ -153,7 +187,6 @@ def end_class_session(db: Session, class_id: str) -> dict:
     """
     Class khatam karo — final attendance mark karo
     """
-    # Class status update karo
     class_ = db.query(Class).filter(Class.id == class_id).first()
     if not class_:
         raise ValueError("Class nahi mili!")
@@ -243,7 +276,6 @@ def override_attendance(
     if not att:
         return False
 
-    # Override record banao
     override = AttendanceOverride(
         attendance_id=att.id,
         teacher_id=teacher_id,
@@ -253,7 +285,6 @@ def override_attendance(
     )
     db.add(override)
 
-    # Attendance update karo
     att.status = new_status
     att.final_marked_at = datetime.now(timezone.utc)
 

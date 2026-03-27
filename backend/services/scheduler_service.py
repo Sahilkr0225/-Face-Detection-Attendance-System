@@ -7,7 +7,9 @@ from backend.config import (
     MID_SCAN_COUNT_MIN,
     MID_SCAN_COUNT_MAX,
     ENTRY_WINDOW_MINUTES,
-    EXIT_WINDOW_MINUTES
+    EXIT_WINDOW_MINUTES,
+    ENTRY_SCAN_INTERVAL_SECONDS,
+    EXIT_SCAN_INTERVAL_SECONDS
 )
 
 
@@ -23,12 +25,6 @@ is_session_active = False
 # ─────────────────────────────────────────
 
 async def trigger_scan(class_id: str, scan_type: str):
-    """
-    Ek scan trigger karo:
-    1. Camera se frame lo
-    2. Faces recognize karo
-    3. Attendance update karo
-    """
     from backend.services.camera_service import camera_service
     from backend.services.recognition_service import recognize_all_faces
     from backend.services.attendance_service import process_scan_results
@@ -39,11 +35,25 @@ async def trigger_scan(class_id: str, scan_type: str):
     db: Session = SessionLocal()
 
     try:
-        # Frame capture karo
-        frame = camera_service.capture_frame()
+        # ✅ 5 frames lo, best results merge karo
+        all_detected = {}  # {student_id: best_confidence}
+        
+        for i in range(5):
+            frame = camera_service.capture_frame()
+            detected = recognize_all_faces(frame)
+            
+            for student in detected:
+                sid = student["student_id"]
+                if sid is None:
+                    continue
+                # Best confidence track karo
+                if sid not in all_detected or student["confidence"] > all_detected[sid]["confidence"]:
+                    all_detected[sid] = student
+            
+            await asyncio.sleep(0.4)  # 0.4 sec gap — 5 frames = 2 sec
 
-        # Faces recognize karo
-        detected_students = recognize_all_faces(frame)
+        # Dict se list banao
+        detected_students = list(all_detected.values())
 
         # Attendance update karo
         result = process_scan_results(
@@ -66,7 +76,6 @@ async def trigger_scan(class_id: str, scan_type: str):
               f"Detected: {result['detected']}, "
               f"Alerts: {len(result['alerts'])}")
 
-        # Alerts print karo
         for alert in result["alerts"]:
             print(f"[ALERT] {alert['student_name']} "
                   f"({alert['roll_no']}) — "
@@ -80,20 +89,64 @@ async def trigger_scan(class_id: str, scan_type: str):
 
 
 # ─────────────────────────────────────────
-# Random Mid Scans Schedule
+# Entry Window — 5 min tak continuously scan
+# ─────────────────────────────────────────
+
+async def run_entry_window(class_id: str):
+    """
+    Pehle 5 min tak har X seconds pe scan karo
+    Jaise hi student detect ho — present mark ho jaayega
+    No strikes during entry window
+    """
+    print(f"[SCHEDULER] Entry window started! ({ENTRY_WINDOW_MINUTES} min)")
+
+    entry_duration = ENTRY_WINDOW_MINUTES * 60  # seconds mein
+    elapsed = 0
+
+    while elapsed < entry_duration and is_session_active:
+        await trigger_scan(class_id, "ENTRY")
+        await asyncio.sleep(ENTRY_SCAN_INTERVAL_SECONDS)
+        elapsed += ENTRY_SCAN_INTERVAL_SECONDS
+
+    print(f"[SCHEDULER] Entry window complete!")
+
+
+# ─────────────────────────────────────────
+# Exit Window — last 5 min tak continuously scan
+# ─────────────────────────────────────────
+
+async def run_exit_window(class_id: str):
+    """
+    Last 5 min tak har X seconds pe scan karo
+    Confirm karo kaun abhi bhi baitha hai
+    """
+    print(f"[SCHEDULER] Exit window started! ({EXIT_WINDOW_MINUTES} min)")
+
+    exit_duration = EXIT_WINDOW_MINUTES * 60  # seconds mein
+    elapsed = 0
+
+    while elapsed < exit_duration and is_session_active:
+        await trigger_scan(class_id, "EXIT")
+        await asyncio.sleep(EXIT_SCAN_INTERVAL_SECONDS)
+        elapsed += EXIT_SCAN_INTERVAL_SECONDS
+
+    print(f"[SCHEDULER] Exit window complete!")
+
+
+# ─────────────────────────────────────────
+# Random Mid Scans
 # ─────────────────────────────────────────
 
 async def schedule_mid_scans(class_id: str, duration_minutes: int):
     """
     Class ke beech mein 2-3 random mid scans karo
+    Strike system active rahega
     """
     num_scans = random.randint(MID_SCAN_COUNT_MIN, MID_SCAN_COUNT_MAX)
 
-    # Available time window
     available_start = ENTRY_WINDOW_MINUTES
     available_end = duration_minutes - EXIT_WINDOW_MINUTES
 
-    # Random times nikalo
     scan_times = sorted(random.sample(
         range(available_start, available_end),
         num_scans
@@ -119,10 +172,10 @@ async def schedule_mid_scans(class_id: str, duration_minutes: int):
 # Main Class Session
 # ─────────────────────────────────────────
 
-async def run_class_session(class_id: str, duration_minutes: int = 60):
+async def run_class_session(class_id: str, duration_minutes: int = 50):
     """
     Poora class session manage karo:
-    Entry → Mid Scans → Exit
+    Entry Window → Mid Scans → Exit Window
     """
     global current_class_id, is_session_active
 
@@ -131,23 +184,24 @@ async def run_class_session(class_id: str, duration_minutes: int = 60):
 
     print(f"\n[SCHEDULER] Class session started! Duration: {duration_minutes} min")
 
-    # Step 1 — Entry Scan (turant)
-    await trigger_scan(class_id, "ENTRY")
+    # Step 1 — Entry Window (pehle 5 min)
+    await run_entry_window(class_id)
 
     # Step 2 — Mid Scans (random times pe)
     mid_scan_task = asyncio.create_task(
         schedule_mid_scans(class_id, duration_minutes)
     )
 
-    # Step 3 — Exit Scan (last 10 min mein)
-    exit_wait = (duration_minutes - EXIT_WINDOW_MINUTES) * 60
-    await asyncio.sleep(exit_wait)
+    # Step 3 — Exit Window ke liye wait karo
+    mid_duration = (duration_minutes - ENTRY_WINDOW_MINUTES - EXIT_WINDOW_MINUTES) * 60
+    await asyncio.sleep(mid_duration)
 
-    # Mid scans khatam karo
+    # Mid scans cancel karo
     mid_scan_task.cancel()
 
+    # Step 4 — Exit Window (last 5 min)
     if is_session_active:
-        await trigger_scan(class_id, "EXIT")
+        await run_exit_window(class_id)
 
     is_session_active = False
     print(f"[SCHEDULER] Class session complete!")
