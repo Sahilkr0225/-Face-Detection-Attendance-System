@@ -7,8 +7,8 @@ from backend.routes.auth_routes import router as auth_router
 from backend.routes.enrollment_routes import router as enrollment_router
 from backend.routes.recognition_routes import router as recognition_router 
 from backend.routes.teacher_route import router as teacher_router
-
-
+# FIX 1: Changed 'StaticFile' to 'StaticFiles'
+from fastapi.staticfiles import StaticFiles 
 
 # ─────────────────────────────────────────
 # Lifespan — DB initialize karo
@@ -20,7 +20,6 @@ async def lifespan(app: FastAPI):
     print("[APP] Server started successfully!")
     yield
 
-
 # ─────────────────────────────────────────
 # App Initialize
 # ─────────────────────────────────────────
@@ -30,7 +29,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
 
 # ─────────────────────────────────────────
 # CORS
@@ -43,20 +41,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ─────────────────────────────────────────
 # Routes Register
 # ─────────────────────────────────────────
-
 app.include_router(auth_router)
 app.include_router(enrollment_router)
 app.include_router(recognition_router)
 app.include_router(teacher_router)
 
+# FIX 2: Move the mount AFTER 'app' is defined
+# Also, usually you mount static files to a path like "/static" or at the end
+# Inside backend/main.py
+app.mount("/", StaticFiles(directory="backend/frontend", html=True), name="frontend")
 
 # ─────────────────────────────────────────
 # Test Route
 # ─────────────────────────────────────────
-@app.get("/")
+@app.get("/health") # Changed to /health because mount "/" might conflict
 async def root():
     return {"message": "Attendance System API is running! 🚀"}
